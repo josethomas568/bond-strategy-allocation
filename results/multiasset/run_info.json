@@ -1,0 +1,12 @@
+{
+ "data_file": "data/multiasset_prices_yahoo_2026-10-09.csv",
+ "last_price_date": "2026-10-09",
+ "backtest_start": "2008-05-31",
+ "backtest_end": "2026-09-30",
+ "months": 221,
+ "ml_oos_start": "2013-02-28",
+ "ml_oos_months": 164,
+ "best_rule": "Momentum (TSMOM)",
+ "monte_carlo_paths": 10000,
+ "decision_date_for_current_weights": "2026-09-30"
+}
