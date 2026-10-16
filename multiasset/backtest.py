@@ -5,6 +5,9 @@ Weights decided at month-end t (from data up to t) are held through month t+1.
 Each month-end the portfolio trades from its drifted weights back to the new target;
 cost = sum_i cost_i * |target_i - drifted_i|. A leverage factor L scales exposures;
 the borrowed amount (L-1) pays cash (BIL) plus a financing spread.
+
+By default the tradable set is the 10 ETFs and weights sum to 1. Passing `assets` that include
+CASH (BIL) lets a portfolio hold T-bills explicitly, as the hedge fund replications do.
 """
 import numpy as np
 import pandas as pd
@@ -12,22 +15,25 @@ import pandas as pd
 from .data import ASSETS, CASH, COST
 
 FIN_SPREAD = 0.005 / 12   # borrowing cost over T-bills for levered portfolios, per month
+COST_ALL = pd.concat([COST, pd.Series({CASH: 1 / 1e4})])   # BIL: 1 bp one-way
 
 
-def run(weights, monthly, leverage=None, cost_mult=1.0, name=""):
-    """weights: DataFrame (decision month-ends x ASSETS). Returns a DataFrame of monthly results
-    stamped at the month in which the return was earned."""
+def run(weights, monthly, leverage=None, cost_mult=1.0, name="", assets=None):
+    """weights: DataFrame (decision month-ends x assets). Returns a DataFrame of monthly results
+    stamped at the month in which the return was earned. `assets` defaults to the 10 ETFs."""
+    assets = ASSETS if assets is None else list(assets)
+    costs = COST_ALL[assets].values
     dates = weights.index
     out = []
     prev_drift = None
     for i in range(len(dates) - 1):
         t, t1 = dates[i], dates[i + 1]
-        w = weights.loc[t, ASSETS].values
+        w = weights.loc[t, assets].values
         L = 1.0 if leverage is None else float(leverage.loc[t])
         e = L * w
         trade = np.abs(e - (prev_drift if prev_drift is not None else np.zeros_like(e)))
-        cost = float((trade * COST[ASSETS].values).sum()) * cost_mult
-        r = monthly.loc[t1, ASSETS].values
+        cost = float((trade * costs).sum()) * cost_mult
+        r = monthly.loc[t1, assets].values
         rc = monthly.loc[t1, CASH]
         gross = float(e @ r) - (L - 1) * (rc + FIN_SPREAD)
         net = gross - cost

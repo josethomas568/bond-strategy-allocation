@@ -1,9 +1,10 @@
 # Bond strategy allocation → global multi-asset allocation
 
-Two studies built on public ETF data:
+Three studies built on public ETF data:
 
 1. **[Global multi-asset allocation](#global-multi-asset-allocation)** — strategic portfolios, tactical signals (rules vs. machine learning), Monte Carlo of 10-year outcomes, and a one-page client note.
-2. **[Bond strategy one-pager](#bond-strategy-one-pager)** — what a 10% or 20% bond or credit allocation does to a 60/40, with an investor PDF and a live Excel backup.
+2. **[Hedge fund and private-market replication](#hedge-fund-and-private-market-replication)** — replicating EDHEC hedge fund indices with the same ETFs (rolling style analysis vs. Kalman filter), de-smoothing a private-market index, and backtesting the replicas with trading costs.
+3. **[Bond strategy one-pager](#bond-strategy-one-pager)** — what a 10% or 20% bond or credit allocation does to a 60/40, with an investor PDF and a live Excel backup.
 
 ---
 
@@ -138,6 +139,128 @@ python -m multiasset.client_note    # one-page client note -> output/
 | `multiasset/tactical.py` | Runs every overlay on the same base and the same out-of-sample months |
 | `multiasset/montecarlo.py` | Joint block-bootstrap of 10-year outcomes |
 | `multiasset/client_note.py` | Plain-language one-pager; every sentence's numbers come from `results/multiasset/` |
+
+---
+
+## Hedge fund and private-market replication
+
+Can the same 10 ETFs plus T-bills reproduce hedge fund strategy returns? And what do private-market returns look like once the appraisal smoothing is removed? The module reuses the multi-asset universe, price file and backtest engine.
+
+### Data
+
+- **Hedge funds:** [EDHEC-Risk alternative indices](https://climateimpact.edhec.edu/all-downloads-hedge-funds-indices), 13 monthly strategy indices, net of fees.
+  - The copy used here is the one EDHEC licenses to the R package PerformanceAnalytics, covering January 1997 to May 2021. `multiasset/fetch_hedgefunds.py` downloads it from GitHub and checks it against an independent copy: all 199 overlapping months agree exactly.
+  - It is saved at `multiasset/reference_data/edhec_alternative_indices.csv`.
+  - To extend the study past May 2021, save a current EDHEC download as `data/edhec_*.csv`. It is used automatically.
+- **Overlap with the ETFs:** June 2007 (BIL's first full month) to May 2021, 168 months. After the 36-month estimation window and the reporting lag, 131 months are out of sample (July 2010 – May 2021).
+- **Private markets:** the [Cliffwater Direct Lending Index](https://www.cliffwaterdirectlendingindex.com/about), quarterly.
+  - Its quarterly history needs a free registration, so it isn't bundled. Save it as `data/private/cdli*.csv` or `.xlsx`.
+  - Until that file exists, the private-markets section runs on **EDHEC Distressed Securities** as a stand-in. Distressed Securities is the most autocorrelated credit-like index available here. The results below are for that stand-in.
+
+### Method
+
+- **Rolling style analysis** (Sharpe, 1992). Each month, the strategy's last 36 monthly returns are regressed on the 10 ETFs and T-bills. Weights are constrained to be ≥ 0 and sum to 1, so the fitted weights are a long-only, fully funded portfolio.
+- **Kalman filter.** Exposures follow a random walk. The strategy's excess return is the ETFs' excess returns times today's exposures, plus noise.
+  - The observation and state noise are estimated by maximum likelihood on the first 36 months only and then fixed. The filter then runs forward one month at a time.
+  - **Unconstrained:** exposures may be short or sum above 1. This is a paper replication only.
+  - **Long-only:** after each update the exposures are projected onto {≥ 0, sum ≤ 1}, with the rest in T-bills. This version is tradable, like the regression portfolio.
+- **No look-ahead.** EDHEC publishes a month's return during the following month, so the weights held in month t+1 use data only through month t−1. A test cuts the data in June 2015 and confirms every weight up to then is unchanged.
+- **De-smoothing** (Getmansky, Lo & Makarov, 2004).
+  - Reported returns are modeled as a weighted average of the current and last two months' true returns, with weights θ₀ + θ₁ + θ₂ = 1.
+  - θ is estimated by maximum likelihood as an MA(2) and normalised. Inverting the filter gives the true returns. Volatility scales by 1/√(Σθ²); the mean is unchanged.
+  - For the replication, θ is re-estimated each month on the data available at the time. The style regression is then fitted to those de-smoothed returns.
+- **Backtest.** The long-only replicas run through `multiasset/backtest.py`, with monthly rebalancing and the same per-ETF trading costs (BIL 1 bp), at 1× and 2× costs.
+  - The engine gained an optional `assets` argument so a portfolio can hold T-bills explicitly. With the default, every earlier result is unchanged to 1e-16.
+
+### Results
+
+**Out-of-sample tracking, gross of costs, July 2010 – May 2021 (131 months)**
+
+| Strategy | Method | Tracking error | Correlation | Out-of-sample R² | Index return/yr | Replica return/yr | Avg. T-bills |
+|---|---|---|---|---|---|---|---|
+| Long/short equity | Rolling style analysis | 2.7% | 0.92 | 0.84 | 6.9% | 5.7% | 53% |
+| Long/short equity | Kalman, unconstrained | 3.0% | 0.90 | 0.80 | 6.9% | 6.3% | 64% |
+| Long/short equity | Kalman, long-only | 3.2% | 0.88 | 0.77 | 6.9% | 6.9% | 39% |
+| Global macro | Rolling style analysis | 2.9% | 0.67 | 0.44 | 4.0% | 2.8% | 63% |
+| Global macro | Kalman, unconstrained | 3.1% | 0.65 | 0.35 | 4.0% | 2.9% | 67% |
+| Global macro | Kalman, long-only | 3.2% | 0.66 | 0.30 | 4.0% | 3.6% | 47% |
+| Event driven | Rolling style analysis | 3.8% | 0.84 | 0.70 | 6.3% | 5.6% | 52% |
+| Event driven | Kalman, unconstrained | 3.6% | 0.86 | 0.72 | 6.3% | 4.2% | 80% |
+| Event driven | Kalman, long-only | 4.2% | 0.81 | 0.63 | 6.3% | 6.9% | 6% |
+
+- **Long/short equity** is mostly market exposure. On average about 24% SPY, 9% EFA and 4% EEM, with half in T-bills; the replica's correlation with the index is 0.92.
+- **Event driven** adds high-yield credit to the same equity mix: 18% SPY and 12% HYG in the regression.
+- **Global macro** is hard to replicate with long-only ETFs (correlation 0.67). Its returns come from timing and shorting that a long-only portfolio cannot reproduce.
+- **The Kalman filter did not beat the simple rolling regression** on tracking error for long/short equity or global macro. For event driven, the likelihood estimate set the exposure drift to zero, so its filter treats exposures as fixed.
+- **Long-only Kalman replicas** came closest to the indices' returns because they held less cash. That came at the price of higher tracking error.
+- **Across all 13 EDHEC indices,** out-of-sample correlation runs from 0.92 (long/short equity) to 0.21 (short selling, which a long-only replica cannot reproduce). The full table is in `results/replication/hf_tracking_out_of_sample.csv`.
+
+**Replication portfolios backtested with trading costs, July 2010 – May 2021**
+
+| Strategy | Method | Net return/yr | Volatility | Sharpe | Max drawdown | Turnover/yr | Cost/yr | Sharpe at 2× costs | Index return/yr | Index Sharpe | Index max drawdown | Net tracking error |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Long/short equity | Rolling style analysis | 5.7% | 5.9% | 0.90 | −10.2% | 0.42 | 4 bp | 0.89 | 6.9% | 0.96 | −10.9% | 2.7% |
+| Long/short equity | Kalman, long-only | 6.8% | 6.5% | 0.98 | −9.7% | 0.78 | 7 bp | 0.97 | 6.9% | 0.96 | −10.9% | 3.2% |
+| Global macro | Rolling style analysis | 2.8% | 3.0% | 0.80 | −3.6% | 0.59 | 4 bp | 0.79 | 4.0% | 0.92 | −4.5% | 2.9% |
+| Global macro | Kalman, long-only | 3.5% | 4.0% | 0.79 | −4.4% | 0.70 | 6 bp | 0.78 | 4.0% | 0.92 | −4.5% | 3.2% |
+| Event driven | Rolling style analysis | 5.5% | 5.2% | 0.98 | −8.3% | 0.67 | 7 bp | 0.96 | 6.3% | 0.86 | −15.1% | 3.8% |
+| Event driven | Kalman, long-only | 6.8% | 6.6% | 0.98 | −10.2% | 0.34 | 3 bp | 0.98 | 6.3% | 0.86 | −15.1% | 4.2% |
+
+- **Costs:** trading costs are 3–7 bp a year, so 2× costs barely move the result. The replicas' turnover is low because the exposures change slowly.
+- **Fees:** the indices are net of hedge fund fees. Here the replicas matched or came within about 1.2% a year of the index returns, at Sharpe ratios of 0.79–0.98 against the indices' 0.86–0.96.
+- **Context:** a plain 60/40 earned 11.2% a year at a 1.40 Sharpe over the same months. This decade favoured simple equity beta over every hedge fund style.
+
+**How smoothed are hedge fund returns? GLM fit on each EDHEC index, 1997–2021**
+
+| Strategy | θ₀ | θ₁ | θ₂ | Smoothing index Σθ² | Reported 1-month autocorr. | After de-smoothing | Reported vol | True vol | Constraints hold |
+|---|---|---|---|---|---|---|---|---|---|
+| Convertible arbitrage | 0.59 | 0.30 | 0.11 | 0.45 | 0.50 | 0.01 | 5.8% | 8.6% | yes |
+| Fixed income arbitrage | 0.59 | 0.31 | 0.09 | 0.46 | 0.48 | −0.00 | 4.0% | 5.9% | yes |
+| Distressed securities | 0.63 | 0.25 | 0.11 | 0.48 | 0.44 | 0.02 | 6.3% | 9.0% | yes |
+| Relative value | 0.67 | 0.24 | 0.08 | 0.52 | 0.38 | 0.01 | 4.1% | 5.7% | yes |
+| Event driven | 0.74 | 0.19 | 0.07 | 0.59 | 0.28 | 0.01 | 6.6% | 8.5% | yes |
+| Long/short equity | 0.80 | 0.14 | 0.05 | 0.67 | 0.20 | 0.00 | 7.2% | 8.9% | yes |
+| Global macro | 0.93 | 0.06 | 0.01 | 0.87 | 0.07 | 0.00 | 5.1% | 5.4% | yes |
+| CTA global | 1.06 | −0.02 | −0.04 | 1.13 | −0.01 | 0.01 | 7.9% | 7.4% | no: not smoothed |
+
+Eight of the 13 rows are shown; the rest are in `results/replication/glm_smoothing_edhec.csv`. Smoothing tracks illiquidity, as GLM found: the arbitrage and distressed strategies hold hard-to-price securities and are the most smoothed. Futures-based CTA and macro funds aren't smoothed at all.
+
+**Private markets: stand-in series (EDHEC Distressed Securities, monthly, 1997–2021)**
+
+| | Reported | De-smoothed (GLM, k = 2) |
+|---|---|---|
+| Volatility | 6.3% | 9.0% (×1.43) |
+| 1-month autocorrelation | 0.44 | 0.02 |
+| Beta to SPY | 0.32 | 0.49 |
+| Beta to SPY with 2 lags (Dimson) | 0.53 | 0.54 |
+| Max drawdown | −22.9% | −24.6% |
+| Mean return | 8.2%/yr | 8.2%/yr |
+
+- **Reported risk understates true risk.** The reported series hides about 30% of the true volatility and a third of the equity beta.
+- **The Dimson check agrees.** Adding lagged market returns to the reported series gives a beta of 0.53, matching the de-smoothed beta. So the extra beta is the market's effect arriving late, not an artefact of the method.
+- **The lag choice matters.** With one lag the volatility multiple is 1.25×; with three lags it is 1.52×. Two lags has the lowest AIC (`private_desmoothing_sensitivity.csv`).
+- **The de-smoothed returns are easier to replicate.** On average the replica held 19% SPY, 11% EFA, 15% HYG, 8% LQD, 6% DBC and 30% T-bills. Against the de-smoothed series, its out-of-sample correlation is 0.77 (R² 0.59) and the index-on-replica beta is 0.99. Against the reported returns, correlation is 0.74, R² 0.35 and beta 0.63, because the reported series reacts to markets late and only partly.
+- **The replica has no smoothing to flatter it.** Its Sharpe of 0.87 sits between the reported index's 0.89, which smoothing inflates, and the de-smoothed index's 0.60. Backtested with costs, it earned 6.5% a year at 7.2% volatility (Sharpe 0.85; 0.84 at 2× costs).
+
+### Run
+
+```bash
+pip install -r requirements.txt
+python -m multiasset.run_replication     # -> results/replication/  (~40 s)
+python -m pytest -q                      # 10 tests: engine compatibility, estimators on simulated data, no look-ahead, CDLI loader
+python -m multiasset.fetch_hedgefunds    # optional: re-download and re-verify the EDHEC indices
+```
+
+When `data/private/cdli*.csv` (or `.xlsx`) is present, `run_replication` uses it automatically. It runs quarterly, with a 20-quarter regression window, a one-quarter reporting lag and SPY compounded to quarters.
+
+| File | What it does |
+|---|---|
+| `multiasset/hedgefunds.py` | EDHEC and CDLI loaders; the stand-in rule |
+| `multiasset/replication.py` | Constrained style regression, Kalman filter (unconstrained and projected long-only), out-of-sample tracking statistics |
+| `multiasset/desmooth.py` | GLM estimation, inversion, Dimson beta, before/after statistics |
+| `multiasset/run_replication.py` | Runs the three studies and the cost backtests, and writes `results/replication/` |
+| `multiasset/fetch_hedgefunds.py` | Downloads and cross-checks the EDHEC indices |
+| `tests/test_replication.py` | The tests above |
 
 ---
 

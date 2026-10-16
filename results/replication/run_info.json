@@ -1,0 +1,41 @@
+{
+ "edhec_source": "EDHEC-Risk alternative indices via R PerformanceAnalytics (bundled copy)",
+ "edhec_end": "2021-05-31",
+ "etf_price_file": "data/multiasset_prices_yahoo_2026-10-09.csv",
+ "factor_start": "2007-06-30",
+ "window_months": 36,
+ "reporting_lag_months": 1,
+ "kalman_params": {
+  "Event Driven": {
+   "R": 0.00013865088305972794,
+   "Q": 4.418686336409697e-19,
+   "train_start": "2007-06-30",
+   "train_end": "2010-05-31"
+  },
+  "Global Macro": {
+   "R": 2.7510192779550514e-05,
+   "Q": 0.00018164729880380503,
+   "train_start": "2007-06-30",
+   "train_end": "2010-05-31"
+  },
+  "Long/Short Equity": {
+   "R": 4.173298985106819e-05,
+   "Q": 0.0004058524154791423,
+   "train_start": "2007-06-30",
+   "train_end": "2010-05-31"
+  }
+ },
+ "private_series": "EDHEC Distressed Securities (monthly) - stand-in until the CDLI file is added",
+ "private_is_stand_in": true,
+ "private_theta": [
+  0.6336,
+  0.2548,
+  0.1116
+ ],
+ "private_k": 2,
+ "sixty_forty_same_window": {
+  "net_return": 0.11243382186127948,
+  "sharpe": 1.403940511593936,
+  "max_drawdown": -0.09355794001623496
+ }
+}
